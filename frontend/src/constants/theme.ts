@@ -1,0 +1,35 @@
+export const THEME = {
+  colors: {
+    vintageGrape: '#60435F',
+    vintageGrapeDark: '#473146',
+    vintageGrapeLight: '#7A5779',
+    petalPink: '#D67AB1',
+    petalPinkDark: '#B95D94',
+    petalPinkLight: '#E898C7',
+    blushPop: '#E2A3C7',
+    blushPopSoft: '#F6E3EE',
+    snow: '#FDF7FA',
+    snowCard: '#FFFFFF',
+    pearlAqua: '#A8DCD9',
+    pearlAquaDark: '#6CBFB9',
+    pearlAquaLight: '#D4F1F0',
+    // Status semantics
+    urgentRed: '#E14D62',
+    urgentBg: '#FDF0F2',
+    urgentBorder: '#F9B4BF',
+    successGreen: '#3EA88F',
+    warningAmber: '#D9822B',
+  },
+  shadows: {
+    soft: '0 8px 32px -4px rgba(96, 67, 95, 0.08), 0 4px 12px -2px rgba(96, 67, 95, 0.04)',
+    floating: '0 20px 48px -8px rgba(96, 67, 95, 0.14), 0 8px 20px -4px rgba(214, 122, 177, 0.12)',
+    kioskCta: '0 16px 36px -6px rgba(214, 122, 177, 0.4), 0 6px 16px -2px rgba(96, 67, 95, 0.1)',
+    glowAqua: '0 0 40px 10px rgba(168, 220, 217, 0.45)',
+    glowPink: '0 0 50px 12px rgba(214, 122, 177, 0.35)',
+  },
+  transitions: {
+    spring: { type: 'spring', stiffness: 380, damping: 28 },
+    gentle: { type: 'spring', stiffness: 220, damping: 24 },
+    slowFloat: { duration: 4, repeat: Infinity, ease: 'easeInOut' },
+  },
+};

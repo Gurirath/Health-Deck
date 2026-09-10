@@ -36,6 +36,7 @@ class TriageState(TypedDict):
     image_bytes: Any
     image_analysis: Any
     status: str
+    session_id: str
 
 
 def extract_node(state: TriageState) -> TriageState:

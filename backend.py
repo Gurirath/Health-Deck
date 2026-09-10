@@ -14,8 +14,12 @@ pad for the hardware team; nothing consumes it yet.
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from dotenv import load_dotenv
+load_dotenv()
+
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 import alerts
@@ -27,6 +31,29 @@ os.makedirs(UPLOADS_DIR, exist_ok=True)
 db.init_db()
 
 app = FastAPI(title="Health Deck API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    origin = request.headers.get("origin", "*")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+        headers={
+            "Access-Control-Allow-Origin": origin if origin else "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
 
 
 class CasePayload(BaseModel):
@@ -211,3 +238,100 @@ def case_report(case_id: int):
 def ingest_vitals(reading: VitalsReading):
     reading_id = db.save_raw_vitals(reading.model_dump())
     return {"id": reading_id}
+
+
+class TriageStartRequest(BaseModel):
+    vitals: Dict[str, Any] = Field(default_factory=dict)
+    symptom_location: str = ""
+    chief_complaint: str = ""
+    session_id: str = ""
+
+
+class TriageStepRequest(BaseModel):
+    state: Dict[str, Any]
+    answer: str
+
+
+@app.post("/triage/start")
+def triage_start(req: TriageStartRequest):
+    import agent_graph
+
+    try:
+        graph = agent_graph.build_graph()
+        initial_state = {
+            "vitals": req.vitals,
+            "chief_complaint": req.chief_complaint,
+            "symptom_location": req.symptom_location,
+            "transcript": [{"role": "user", "content": req.chief_complaint}],
+            "extracted": {},
+            "turn_count": 0,
+            "ready_to_diagnose": False,
+            "red_flags": [],
+            "next_question": "",
+            "diagnosis": {},
+            "raw_llm_response": {},
+            "escalate": False,
+            "escalation_reason": "",
+            "department": "",
+            "solution_sources": [],
+            "image_bytes": None,
+            "image_analysis": None,
+            "status": "",
+            "session_id": req.session_id,
+        }
+        if req.session_id:
+            path = _upload_path(req.session_id)
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    initial_state["image_bytes"] = f.read()
+
+        result = graph.invoke(initial_state)
+        result_copy = dict(result)
+        result_copy.pop("image_bytes", None)
+        result_copy["session_id"] = req.session_id
+        return result_copy
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/triage/step")
+def triage_step(req: TriageStepRequest):
+    import agent_graph
+
+    try:
+        graph = agent_graph.build_graph()
+        state = dict(req.state)
+        if state.get("next_question"):
+            state.setdefault("transcript", []).append(
+                {"role": "assistant", "content": state["next_question"]}
+            )
+        state.setdefault("transcript", []).append({"role": "user", "content": req.answer})
+        session_id = state.get("session_id", "")
+        if session_id:
+            path = _upload_path(session_id)
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    state["image_bytes"] = f.read()
+
+        result = graph.invoke(state)
+        result_copy = dict(result)
+        result_copy.pop("image_bytes", None)
+        result_copy["session_id"] = session_id
+        return result_copy
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/triage/transcribe")
+def triage_transcribe(file: UploadFile = File(...)):
+    import stt_client
+
+    try:
+        audio_bytes = file.file.read()
+        if not audio_bytes:
+            return {"text": ""}
+        text = stt_client.transcribe(audio_bytes)
+        return {"text": (text or "").strip()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
