@@ -72,3 +72,28 @@ Produce your triage decision. Respond with JSON only, in exactly this shape:
   "safety_note": "anything the human clinician should see first if this gets escalated"
 }}
 """
+
+
+def grounded_advice_prompt(diagnosis, original_self_care_advice, snippets):
+    snippet_lines = []
+    for index, snippet in enumerate(snippets, start=1):
+        snippet_lines.append(f"[{index}] {snippet}")
+    snippet_text = "\n".join(snippet_lines)
+    return f"""A triage decision has already been made. Do not change the diagnosis, the confidence, the category, or the routing. You are only rewriting the self-care advice.
+
+Probable diagnosis: {diagnosis.get("probable_diagnosis", "")}
+Chief complaint context: {diagnosis.get("reasoning", "")}
+Current self-care advice: {original_self_care_advice}
+
+Snippets retrieved from trusted medical sources (Mayo Clinic, NHS, MedlinePlus, CDC, WHO, Cleveland Clinic):
+{snippet_text}
+
+Rewrite self_care_advice so every instruction is supported by the snippets above. Be concrete and specific to this condition: real home-care steps, what helps and what to avoid, roughly how long it usually takes to settle, and the clear signs that mean it is time to see a clinician. No generic filler, and do not add anything the snippets do not support.
+
+Keep the earlier rules exactly: you may name general OTC remedy categories with a plain generic example (an OTC fever reducer such as paracetamol/acetaminophen, a decongestant, throat lozenges) but never a dose, strength, frequency, or prescription-only medicine, and always end with a line to follow the package directions and check with a pharmacist if on other medication, pregnant, or treating a child.
+
+Respond with JSON only, in exactly this shape:
+{{
+  "self_care_advice": "the rewritten, snippet-grounded advice"
+}}
+"""

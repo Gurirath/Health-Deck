@@ -6,3 +6,7 @@ python-dotenv
 fastapi
 uvicorn
 requests
+python-multipart
+qrcode[pil]
+fpdf2
+faster-whisper

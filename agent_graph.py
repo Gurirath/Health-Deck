@@ -3,8 +3,15 @@ from typing import Any, Dict, List, TypedDict
 from langgraph.graph import END, StateGraph
 
 from llm_client import chat_json
-from prompts import SYSTEM_PROMPT, diagnosis_prompt, followup_prompt
+from prompts import (
+    SYSTEM_PROMPT,
+    diagnosis_prompt,
+    followup_prompt,
+    grounded_advice_prompt,
+)
 from rules import DEPARTMENT_ROUTES, check_red_flags
+from search_client import search as web_search
+from vision_client import analyze_image
 
 MAX_TURNS = 5
 CONFIDENCE_THRESHOLD = 65
@@ -25,6 +32,9 @@ class TriageState(TypedDict):
     escalate: bool
     escalation_reason: str
     department: str
+    solution_sources: List[str]
+    image_bytes: Any
+    image_analysis: Any
     status: str
 
 
@@ -85,12 +95,76 @@ def diagnose_node(state: TriageState) -> TriageState:
     return state
 
 
+def _diagnosis_label(diagnosis):
+    label = diagnosis.get("probable_diagnosis", "")
+    if label:
+        return label
+    differentials = diagnosis.get("differentials") or []
+    if differentials:
+        first = differentials[0]
+        if isinstance(first, dict):
+            return first.get("name", "") or first.get("diagnosis", "")
+        return str(first)
+    return ""
+
+
+def search_solution_node(state: TriageState) -> TriageState:
+    state.setdefault("solution_sources", [])
+    if state.get("escalate"):
+        return state
+
+    diagnosis = state.get("diagnosis", {}) or {}
+    label = _diagnosis_label(diagnosis)
+    query = " ".join(
+        part for part in ("self-care home treatment for", label, state.get("chief_complaint", "")) if part
+    ).strip()
+    if not label:
+        return state
+
+    results = web_search(query)
+    sources = [item.get("url", "") for item in results if item.get("url")]
+    if not sources:
+        return state
+    state["solution_sources"] = sources
+
+    snippets = [item.get("content", "") for item in results if item.get("content")]
+    rewrite = chat_json(
+        SYSTEM_PROMPT,
+        grounded_advice_prompt(diagnosis, diagnosis.get("self_care_advice", ""), snippets),
+    )
+    new_advice = rewrite.get("self_care_advice", "")
+    if new_advice:
+        state["diagnosis"] = {**diagnosis, "self_care_advice": new_advice}
+    return state
+
+
+def analyze_photo_node(state: TriageState) -> TriageState:
+    image_bytes = state.get("image_bytes")
+    if not image_bytes:
+        state["image_analysis"] = None
+        return state
+
+    diagnosis = state.get("diagnosis", {}) or {}
+    context = (
+        f"Chief complaint: {state.get('chief_complaint', '')}. "
+        f"Body location: {state.get('symptom_location', '')}. "
+        f"Working impression from the conversation: {diagnosis.get('probable_diagnosis', 'none')}."
+    )
+    try:
+        state["image_analysis"] = analyze_image(image_bytes, context)
+    except Exception:
+        state["image_analysis"] = None
+    return state
+
+
 def build_graph():
     graph = StateGraph(TriageState)
     graph.add_node("extract", extract_node)
     graph.add_node("redflag_check", redflag_node)
     graph.add_node("ask_question", ask_question_node)
     graph.add_node("diagnose", diagnose_node)
+    graph.add_node("search_solution", search_solution_node)
+    graph.add_node("analyze_photo", analyze_photo_node)
 
     graph.set_entry_point("extract")
     graph.add_edge("extract", "redflag_check")
@@ -100,6 +174,8 @@ def build_graph():
         {"diagnose": "diagnose", "ask_question": "ask_question"},
     )
     graph.add_edge("ask_question", END)
-    graph.add_edge("diagnose", END)
+    graph.add_edge("diagnose", "search_solution")
+    graph.add_edge("search_solution", "analyze_photo")
+    graph.add_edge("analyze_photo", END)
 
     return graph.compile()

@@ -10,3 +10,6 @@ venv/
 *.sqlite
 *.sqlite3
 healthdeck.db
+
+uploads/
+reports/

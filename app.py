@@ -1,19 +1,18 @@
+import io
 import os
+import uuid
 
+import qrcode
 import requests
 import streamlit as st
 
+import stt_client
 from agent_graph import build_graph
 from symptom_location import SelectboxLocationProvider
 from vitals_provider import ManualVitalsProvider
 
 API_URL = os.environ.get("HEALTHDECK_API_URL", "http://localhost:8000")
-
-ESCALATION_LABELS = {
-    "red_flag": "red flag",
-    "low_confidence": "low confidence",
-    "": "none",
-}
+PUBLIC_BASE_URL = os.environ.get("HEALTHDECK_PUBLIC_BASE_URL", "http://localhost:8000")
 
 st.set_page_config(
     page_title="Health Deck — Triage",
@@ -49,12 +48,54 @@ def reset_case():
     st.session_state.messages = []
     st.session_state.state = None
     st.session_state.saved_case_id = None
+    st.session_state.session_id = str(uuid.uuid4())
+    st.session_state.processed_audio = None
 
 
-def format_department(department, escalation_reason):
-    if escalation_reason == "red_flag":
-        return f"{department} (urgent)"
-    return department
+def qr_png(target):
+    buffer = io.BytesIO()
+    qrcode.make(target).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def upload_target():
+    return f"{PUBLIC_BASE_URL}/upload/{st.session_state.session_id}"
+
+
+def public_url_looks_local():
+    return "localhost" in PUBLIC_BASE_URL or "127.0.0.1" in PUBLIC_BASE_URL
+
+
+def fetch_session_image():
+    try:
+        response = requests.get(
+            f"{API_URL}/upload/{st.session_state.session_id}/image", timeout=10
+        )
+        if response.status_code == 200:
+            return response.content
+    except requests.RequestException:
+        return None
+    return None
+
+
+def spoken_text(audio, widget_key):
+    if audio is None:
+        return None
+    marker = (widget_key, hash(audio.getvalue()))
+    if st.session_state.get("processed_audio") == marker:
+        return None
+    st.session_state.processed_audio = marker
+    return stt_client.transcribe(audio.getvalue())
+
+
+def show_photo_qr(caption):
+    st.image(qr_png(upload_target()), width=220, caption=caption)
+    if public_url_looks_local():
+        st.warning(
+            "This QR points at localhost, so a phone on the network cannot open it. "
+            "Set HEALTHDECK_PUBLIC_BASE_URL to this kiosk's LAN IP "
+            "(for example http://192.168.1.50:8000) and restart before the demo."
+        )
 
 
 def case_payload(state):
@@ -70,6 +111,32 @@ def case_payload(state):
         "escalate": state.get("escalate", False),
         "escalation_reason": state.get("escalation_reason", ""),
         "department": state.get("department", ""),
+        "solution_sources": state.get("solution_sources", []),
+        "image_analysis": state.get("image_analysis"),
+        "session_id": st.session_state.session_id,
+    }
+
+
+def blank_state(vitals, symptom_location, complaint):
+    return {
+        "vitals": vitals,
+        "chief_complaint": complaint,
+        "symptom_location": symptom_location,
+        "transcript": [{"role": "user", "content": complaint}],
+        "extracted": {},
+        "turn_count": 0,
+        "ready_to_diagnose": False,
+        "red_flags": [],
+        "next_question": "",
+        "diagnosis": {},
+        "raw_llm_response": {},
+        "escalate": False,
+        "escalation_reason": "",
+        "department": "",
+        "solution_sources": [],
+        "image_bytes": fetch_session_image(),
+        "image_analysis": None,
+        "status": "",
     }
 
 
@@ -81,9 +148,13 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "saved_case_id" not in st.session_state:
     st.session_state.saved_case_id = None
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
+if "processed_audio" not in st.session_state:
+    st.session_state.processed_audio = None
 
 st.title("Health Deck")
-st.subheader("Tell us what's going on and we'll point you to the right care.")
+st.subheader("Tell us what's going on and a doctor will review it.")
 
 with st.sidebar:
     vitals = vitals_provider.get_vitals()
@@ -100,40 +171,39 @@ state = st.session_state.state
 
 if state is None:
     symptom_location = location_provider.get_location()
+    show_photo_qr(
+        "Optional: scan to send a photo of the problem from your phone. "
+        "You can continue without it."
+    )
+    audio = st.audio_input("Or record what's bothering you", key="audio_intake")
     complaint = st.chat_input("What's bothering you today?")
-    if complaint:
-        st.session_state.messages.append({"role": "user", "content": complaint})
-        new_state = {
-            "vitals": vitals,
-            "chief_complaint": complaint,
-            "symptom_location": symptom_location,
-            "transcript": [{"role": "user", "content": complaint}],
-            "extracted": {},
-            "turn_count": 0,
-            "ready_to_diagnose": False,
-            "red_flags": [],
-            "next_question": "",
-            "diagnosis": {},
-            "raw_llm_response": {},
-            "escalate": False,
-            "escalation_reason": "",
-            "department": "",
-            "status": "",
-        }
-        result = st.session_state.graph.invoke(new_state)
+    spoken = spoken_text(audio, "audio_intake")
+    submitted = complaint or spoken
+    if submitted:
+        st.session_state.messages.append({"role": "user", "content": submitted})
+        result = st.session_state.graph.invoke(
+            blank_state(vitals, symptom_location, submitted)
+        )
         st.session_state.state = result
         st.rerun()
 
 elif state["status"] == "awaiting_answer":
     with st.chat_message("assistant"):
         st.write(state["next_question"])
-    answer = st.chat_input("Your answer")
+    with st.expander("Send a photo from your phone"):
+        show_photo_qr("Scan to attach a photo to this session.")
+    audio_key = f"audio_followup_{state.get('turn_count', 0)}"
+    audio = st.audio_input("Or record your answer", key=audio_key)
+    typed = st.chat_input("Your answer")
+    spoken = spoken_text(audio, audio_key)
+    answer = typed or spoken
     if answer:
         st.session_state.messages.append({"role": "assistant", "content": state["next_question"]})
         st.session_state.messages.append({"role": "user", "content": answer})
         state["transcript"].append({"role": "assistant", "content": state["next_question"]})
         state["transcript"].append({"role": "user", "content": answer})
         state["vitals"] = vitals
+        state["image_bytes"] = fetch_session_image()
         result = st.session_state.graph.invoke(state)
         st.session_state.state = result
         st.rerun()
@@ -150,29 +220,63 @@ elif state["status"] == "complete":
                 "Start it with: uvicorn backend:app --reload"
             )
 
-    diagnosis = state["diagnosis"]
-    department = format_department(state["department"], state["escalation_reason"])
-    reason_label = ESCALATION_LABELS.get(state["escalation_reason"], state["escalation_reason"])
+    case_id = st.session_state.saved_case_id
+    if case_id is None:
+        if st.button("Start new case"):
+            reset_case()
+            st.rerun()
+    else:
+        case = None
+        try:
+            r = requests.get(f"{API_URL}/cases/{case_id}", timeout=10)
+            r.raise_for_status()
+            case = r.json()
+        except requests.RequestException:
+            pass
 
-    with st.chat_message("assistant"):
-        if state["escalate"]:
-            st.error("This case needs a human clinician to take a look.")
-            st.write(f"Recommended department: {department}")
-            if state["red_flags"]:
-                st.write("Red flags detected:")
-                for flag in state["red_flags"]:
-                    st.write(f"- {flag}")
-            st.write(diagnosis.get("reasoning", ""))
-            st.info(diagnosis.get("safety_note", ""))
-        else:
-            st.success(f"Likely: {diagnosis.get('probable_diagnosis', 'Unclear')}")
-            st.write(diagnosis.get("reasoning", ""))
-            st.write(diagnosis.get("self_care_advice", ""))
-        st.write(f"Confidence: {diagnosis.get('confidence', 0)}% — escalation reason: {reason_label}")
+        department = (case or {}).get("department") or state.get("department", "the clinical")
+        current_status = (case or {}).get("status", "pending")
 
-    if st.session_state.saved_case_id is not None:
-        st.caption(f"Case #{st.session_state.saved_case_id} filed for clinician review.")
+        with st.chat_message("assistant"):
+            if current_status != "prescribed":
+                st.info(
+                    f"Your report has been sent to the {department} team for a doctor "
+                    "to review. Please wait."
+                )
+                st.caption(f"Case #{case_id}")
+                if st.button("Check status"):
+                    st.rerun()
+            else:
+                st.success("A doctor has reviewed your case and written a prescription.")
+                st.write(f"Prescribed by: {case.get('doctor_name', '')}")
+                medicines = case.get("prescription_medicines", []) or []
+                if medicines:
+                    st.table(
+                        [
+                            {
+                                "Medicine": medicine.get("name", ""),
+                                "Dosage/day": medicine.get("dosage_per_day", ""),
+                                "Remark": medicine.get("remark", ""),
+                            }
+                            for medicine in medicines
+                        ]
+                    )
+                if case.get("doctor_notes"):
+                    st.write(f"Notes from the doctor: {case['doctor_notes']}")
+                try:
+                    report = requests.get(
+                        f"{API_URL}/cases/{case_id}/report", timeout=10
+                    )
+                    if report.status_code == 200:
+                        st.download_button(
+                            "Download report",
+                            data=report.content,
+                            file_name=f"health_deck_case_{case_id}.pdf",
+                            mime="application/pdf",
+                        )
+                except requests.RequestException:
+                    pass
 
-    if st.button("Start new case"):
-        reset_case()
-        st.rerun()
+        if st.button("Start new case"):
+            reset_case()
+            st.rerun()
