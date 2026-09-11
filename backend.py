@@ -22,8 +22,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-import alerts
-import db
+from core import alerts
+from core import db
 
 UPLOADS_DIR = os.path.abspath(os.environ.get("HEALTHDECK_UPLOADS_DIR", "uploads"))
 os.makedirs(UPLOADS_DIR, exist_ok=True)
@@ -254,7 +254,7 @@ class TriageStepRequest(BaseModel):
 
 @app.post("/triage/start")
 def triage_start(req: TriageStartRequest):
-    import agent_graph
+    from core import agent_graph
 
     try:
         graph = agent_graph.build_graph()
@@ -296,7 +296,7 @@ def triage_start(req: TriageStartRequest):
 
 @app.post("/triage/step")
 def triage_step(req: TriageStepRequest):
-    import agent_graph
+    from core import agent_graph
 
     try:
         graph = agent_graph.build_graph()

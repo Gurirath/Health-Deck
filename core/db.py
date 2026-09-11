@@ -252,7 +252,7 @@ def prescribe_case(case_id, doctor_name, medicines, notes):
         )
         conn.commit()
 
-    import report_builder
+    from core import report_builder
 
     case = get_case(case_id)
     pdf_path = report_builder.generate_pdf(case_id, report_builder.build_report(case))

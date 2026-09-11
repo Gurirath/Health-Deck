@@ -6,9 +6,9 @@ import qrcode
 import requests
 import streamlit as st
 
-import ai_clients
-from agent_graph import build_graph
-from providers import ManualVitalsProvider, SelectboxLocationProvider
+from core import ai_clients
+from core.agent_graph import build_graph
+from core.providers import ManualVitalsProvider, SelectboxLocationProvider
 
 API_URL = os.environ.get("HEALTHDECK_API_URL", "http://localhost:8000")
 PUBLIC_BASE_URL = os.environ.get("HEALTHDECK_PUBLIC_BASE_URL", "http://localhost:8000")

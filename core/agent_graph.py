@@ -2,15 +2,15 @@ from typing import Any, Dict, List, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from ai_clients import analyze_image, chat_json
-from ai_clients import search as web_search
-from prompts import (
+from core.ai_clients import analyze_image, chat_json
+from core.ai_clients import search as web_search
+from core.prompts import (
     SYSTEM_PROMPT,
     diagnosis_prompt,
     followup_prompt,
     grounded_advice_prompt,
 )
-from rules import DEPARTMENT_ROUTES, check_red_flags
+from core.rules import DEPARTMENT_ROUTES, check_red_flags
 
 MAX_TURNS = 5
 CONFIDENCE_THRESHOLD = 65

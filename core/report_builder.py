@@ -23,7 +23,8 @@ from fpdf import FPDF
 from fpdf.fonts import FontFace
 
 REPORTS_DIR = os.environ.get("HEALTHDECK_REPORTS_DIR", "reports")
-LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOGO_PATH = os.path.join(_PROJECT_ROOT, "assets", "logo.png")
 PUBLIC_BASE_URL = os.environ.get("HEALTHDECK_PUBLIC_BASE_URL", "http://localhost:8000")
 
 HOSPITAL_NAME = "OVERSIMPLIFIED HOSPITAL"

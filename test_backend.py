@@ -132,7 +132,7 @@ def test_prescribe_and_report():
 
 
 def test_old_shape_medicines_normalised():
-    import db
+    from core import db
 
     case_id = client.post(
         "/cases",
@@ -156,7 +156,7 @@ def test_old_shape_medicines_normalised():
 
 
 def test_report_pdf_layout_and_missing_logo():
-    import report_builder
+    from core import report_builder
 
     case = {
         "chief_complaint": "sore throat and mild fever",

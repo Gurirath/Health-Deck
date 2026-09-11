@@ -3,8 +3,8 @@ import os
 import requests
 import streamlit as st
 
-import report_builder
-from rules import DEPARTMENT_ROUTES
+from core import report_builder
+from core.rules import DEPARTMENT_ROUTES
 
 st.set_page_config(page_title="Health Deck — Clinician Dashboard", layout="wide")
 

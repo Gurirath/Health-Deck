@@ -1,5 +1,5 @@
-import ai_clients
-from agent_graph import build_graph
+from core import ai_clients
+from core.agent_graph import build_graph
 
 ai_clients.LLM_PROVIDER = "mock"
 ai_clients.SEARCH_PROVIDER = "mock"
