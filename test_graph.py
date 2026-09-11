@@ -1,11 +1,9 @@
-import llm_client
-import search_client
-import vision_client
+import ai_clients
 from agent_graph import build_graph
 
-llm_client.PROVIDER = "mock"
-search_client.PROVIDER = "mock"
-vision_client.PROVIDER = "mock"
+ai_clients.LLM_PROVIDER = "mock"
+ai_clients.SEARCH_PROVIDER = "mock"
+ai_clients.VISION_PROVIDER = "mock"
 
 FAKE_IMAGE_BYTES = b"\xff\xd8\xff\xe0fake-jpeg-bytes"
 MOCK_IMAGE_ANALYSIS = {
@@ -64,7 +62,7 @@ def _fresh_normal_responses():
 
 
 def run_normal_case():
-    search_client.set_mock_results(
+    ai_clients.set_mock_search_results(
         [
             {
                 "title": "Common cold - self-care",
@@ -78,7 +76,7 @@ def run_normal_case():
             },
         ]
     )
-    llm_client.set_mock_responses(
+    ai_clients.set_mock_llm_responses(
         _fresh_normal_responses()
         + [
             {
@@ -92,7 +90,7 @@ def run_normal_case():
             }
         ]
     )
-    vision_client.set_mock_analysis(MOCK_IMAGE_ANALYSIS)
+    ai_clients.set_mock_vision_analysis(MOCK_IMAGE_ANALYSIS)
     graph = build_graph()
     state = _normal_state()
     state["image_bytes"] = FAKE_IMAGE_BYTES
@@ -120,8 +118,8 @@ def run_normal_case():
 
 
 def run_normal_case_no_search():
-    search_client.set_mock_results([])
-    llm_client.set_mock_responses(_fresh_normal_responses())
+    ai_clients.set_mock_search_results([])
+    ai_clients.set_mock_llm_responses(_fresh_normal_responses())
     graph = build_graph()
     state = _normal_state()
 
@@ -180,9 +178,9 @@ def _redflag_state():
 
 
 def run_redflag_case():
-    search_client.set_mock_results([])
-    vision_client.set_mock_analysis(MOCK_IMAGE_ANALYSIS)
-    llm_client.set_mock_responses(_redflag_responses())
+    ai_clients.set_mock_search_results([])
+    ai_clients.set_mock_vision_analysis(MOCK_IMAGE_ANALYSIS)
+    ai_clients.set_mock_llm_responses(_redflag_responses())
     graph = build_graph()
     state = _redflag_state()
     state["image_bytes"] = FAKE_IMAGE_BYTES
@@ -198,8 +196,8 @@ def run_redflag_case():
 
 
 def run_redflag_case_no_photo():
-    search_client.set_mock_results([])
-    llm_client.set_mock_responses(_redflag_responses())
+    ai_clients.set_mock_search_results([])
+    ai_clients.set_mock_llm_responses(_redflag_responses())
     graph = build_graph()
     state = _redflag_state()
 
@@ -212,9 +210,9 @@ def run_redflag_case_no_photo():
 
 
 def run_photo_arrives_after_first_turn():
-    search_client.set_mock_results([])
-    vision_client.set_mock_analysis(MOCK_IMAGE_ANALYSIS)
-    llm_client.set_mock_responses(_fresh_normal_responses())
+    ai_clients.set_mock_search_results([])
+    ai_clients.set_mock_vision_analysis(MOCK_IMAGE_ANALYSIS)
+    ai_clients.set_mock_llm_responses(_fresh_normal_responses())
     graph = build_graph()
 
     state = _normal_state()

@@ -6,10 +6,9 @@ import qrcode
 import requests
 import streamlit as st
 
-import stt_client
+import ai_clients
 from agent_graph import build_graph
-from symptom_location import SelectboxLocationProvider
-from vitals_provider import ManualVitalsProvider
+from providers import ManualVitalsProvider, SelectboxLocationProvider
 
 API_URL = os.environ.get("HEALTHDECK_API_URL", "http://localhost:8000")
 PUBLIC_BASE_URL = os.environ.get("HEALTHDECK_PUBLIC_BASE_URL", "http://localhost:8000")
@@ -78,6 +77,31 @@ def fetch_session_image():
     return None
 
 
+def photo_arrived():
+    try:
+        response = requests.get(
+            f"{API_URL}/upload/{st.session_state.session_id}/status", timeout=10
+        )
+        if response.status_code == 200:
+            return bool(response.json().get("uploaded"))
+    except requests.RequestException:
+        return False
+    return False
+
+
+def show_photo_confirmation():
+    if not photo_arrived():
+        return
+    image = fetch_session_image()
+    if image is None:
+        return
+    st.image(
+        image,
+        width=260,
+        caption="Photo received — we'll include this in your report.",
+    )
+
+
 def spoken_text(audio, widget_key):
     if audio is None:
         return None
@@ -85,7 +109,7 @@ def spoken_text(audio, widget_key):
     if st.session_state.get("processed_audio") == marker:
         return None
     st.session_state.processed_audio = marker
-    return stt_client.transcribe(audio.getvalue())
+    return ai_clients.transcribe(audio.getvalue())
 
 
 def show_photo_qr(caption):
@@ -175,6 +199,7 @@ if state is None:
         "Optional: scan to send a photo of the problem from your phone. "
         "You can continue without it."
     )
+    show_photo_confirmation()
     audio = st.audio_input("Or record what's bothering you", key="audio_intake")
     complaint = st.chat_input("What's bothering you today?")
     spoken = spoken_text(audio, "audio_intake")
@@ -192,6 +217,7 @@ elif state["status"] == "awaiting_answer":
         st.write(state["next_question"])
     with st.expander("Send a photo from your phone"):
         show_photo_qr("Scan to attach a photo to this session.")
+    show_photo_confirmation()
     audio_key = f"audio_followup_{state.get('turn_count', 0)}"
     audio = st.audio_input("Or record your answer", key=audio_key)
     typed = st.chat_input("Your answer")
@@ -244,6 +270,7 @@ elif state["status"] == "complete":
                     "to review. Please wait."
                 )
                 st.caption(f"Case #{case_id}")
+                show_photo_confirmation()
                 if st.button("Check status"):
                     st.rerun()
             else:

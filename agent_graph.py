@@ -2,7 +2,8 @@ from typing import Any, Dict, List, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from llm_client import chat_json
+from ai_clients import analyze_image, chat_json
+from ai_clients import search as web_search
 from prompts import (
     SYSTEM_PROMPT,
     diagnosis_prompt,
@@ -10,8 +11,6 @@ from prompts import (
     grounded_advice_prompt,
 )
 from rules import DEPARTMENT_ROUTES, check_red_flags
-from search_client import search as web_search
-from vision_client import analyze_image
 
 MAX_TURNS = 5
 CONFIDENCE_THRESHOLD = 65

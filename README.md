@@ -238,26 +238,22 @@ Smoke-test the running backend with `curl http://localhost:8000/` or open
 | `pages/1_Clinician_Dashboard.py` | Doctor queue (every non-prescribed case): full report, patient photo, prescribing form, lighter review action |
 | `backend.py` | FastAPI over `db.py`: cases, QR upload endpoints, prescribe, report PDF, `/vitals`, red-flag alerts |
 | `agent_graph.py` | LangGraph flow: extract → red-flag check → ask / diagnose → ground advice → analyse photo |
-| `vision_client.py` | Provider-agnostic image observation (`groq` / `ollama` / `mock`); describes, never diagnoses |
-| `stt_client.py` | Local speech-to-text via `faster-whisper` (`mock` for tests); model loaded once |
+| `ai_clients.py` | All four provider-agnostic AI clients: LLM chat (groq/ollama, 429 retry), search (tavily), image observation (groq/ollama), speech-to-text (faster-whisper); each with a `mock` mode |
+| `providers.py` | `VitalsProvider` (manual sliders + sensor stub) and `SymptomLocationProvider` (region selectbox + body-map stub) |
 | `report_builder.py` | `build_report` (3-section dict) and `generate_pdf` (fpdf2) — patient intake / AI assessment / prescription |
 | `alerts.py` | Twilio WhatsApp Sandbox fan-out for red-flag cases; no-ops if unconfigured |
-| `search_client.py` | Provider-agnostic search (`tavily` / `mock`) restricted to trusted medical domains |
 | `rules.py` | Deterministic red-flag checks that override the model's confidence |
 | `prompts.py` | System prompt + the task prompts; JSON-only output contract |
-| `llm_client.py` | Provider-agnostic LLM wrapper (groq / ollama / mock), with Groq 429 retry |
-| `vitals_provider.py` | `VitalsProvider` interface + manual (sliders) and sensor (stub) implementations |
-| `symptom_location.py` | Body-region input, abstracted so a 3D body map can replace the selectbox |
 | `db.py` | SQLite: cases (with prescription + photo fields), `session_uploads`, raw sensor reads |
 | `test_graph.py` / `test_backend.py` | Graph wiring test / backend endpoint test |
 
 ## What still needs hardware
 
-- **Vitals.** `vitals_provider.SensorVitalsProvider.get_vitals()` is a stub that
+- **Vitals.** `providers.SensorVitalsProvider.get_vitals()` is a stub that
   raises `NotImplementedError`. The hardware team implements it to read the sensor
   board and return `{spo2, temp_c, hr, systolic_bp, diastolic_bp}`; nothing in the
   agent or UI changes. `ManualVitalsProvider` (sidebar sliders) is the stand-in.
-- **Symptom location.** `symptom_location.SelectboxLocationProvider` is a coarse
+- **Symptom location.** `providers.SelectboxLocationProvider` is a coarse
   body-region selectbox. `BodyMapLocationProvider` is reserved for a tappable 3D
   body map (Blender → glTF → Three.js) and implements the same `get_location()`.
 - **Raw sensor feed.** `POST /vitals` on the backend accepts
