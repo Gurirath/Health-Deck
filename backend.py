@@ -11,49 +11,146 @@ dashboard queue until a doctor prescribes for it. POST /vitals is a landing
 pad for the hardware team; nothing consumes it yet.
 """
 
+import logging
 import os
+import re
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from core import alerts
-from core import db
+from core import alerts, auth, config, db
+from core.auth import get_current_doctor
+from core.rate_limit import rate_limit
 
-UPLOADS_DIR = os.path.abspath(os.environ.get("HEALTHDECK_UPLOADS_DIR", "uploads"))
+logger = logging.getLogger("healthdeck.backend")
+
+UPLOADS_DIR = os.path.abspath(config.get_uploads_dir())
+REPORTS_DIR = os.path.abspath(config.get_reports_dir())
 os.makedirs(UPLOADS_DIR, exist_ok=True)
+os.makedirs(REPORTS_DIR, exist_ok=True)
 
+# Initialize database
 db.init_db()
 
-app = FastAPI(title="Health Deck API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager validating production configuration and running migrations."""
+    if config.is_production():
+        config.ensure_production_ready()
+    db.init_db()
+    yield
+
+
+# Restrict Swagger/OpenAPI docs in production to prevent schema harvesting
+app = FastAPI(
+    title="Health Deck API",
+    version="1.0.0",
+    docs_url="/docs" if not config.is_production() else None,
+    redoc_url="/redoc" if not config.is_production() else None,
+    openapi_url="/openapi.json" if not config.is_production() else None,
+    lifespan=lifespan,
+)
+
+# CORS Configuration:
+# In development, allows broad origins to permit local network testing from mobile devices (QR uploads).
+# In production, uses strictly configured explicit origins and disallows wildcard '*'.
+allowed_origins = config.get_allowed_origins()
+if not allowed_origins and not config.is_production():
+    allowed_origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins if allowed_origins else [],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Inject modern production security headers into all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # Enforce HSTS only in production mode or when running over HTTPS
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    if config.is_production() or proto == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    return response
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    origin = request.headers.get("origin", "*")
+    """Sanitized global exception handler to prevent internal info leakage in production."""
+    logger.error(
+        "Unhandled exception processing %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+        exc_info=True,
+    )
+
+    if config.is_production():
+        detail = "An internal server error occurred. Please contact hospital technical support."
+    else:
+        detail = str(exc)
+
+    origin = request.headers.get("origin", "")
+    origins_list = config.get_allowed_origins()
+    if "*" in origins_list or not config.is_production():
+        cors_origin = origin if origin else "*"
+    elif origin in origins_list:
+        cors_origin = origin
+    else:
+        cors_origin = origins_list[0] if origins_list else ""
+
+    headers = {
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "*",
+        "Access-Control-Allow-Headers": "*",
+    }
+    if cors_origin:
+        headers["Access-Control-Allow-Origin"] = cors_origin
+
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc)},
-        headers={
-            "Access-Control-Allow-Origin": origin if origin else "*",
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Methods": "*",
-            "Access-Control-Allow-Headers": "*",
-        },
+        content={"detail": detail},
+        headers=headers,
     )
+
+
+@app.get("/health")
+def health_check():
+    """Sanitized database liveness and readiness probe.
+    
+    Returns 200 {'status': 'healthy'} when database is responsive.
+    Returns 503 {'status': 'unhealthy'} if database is unreachable.
+    Never exposes internal hosts, paths, credentials, or stack traces.
+    """
+    is_healthy = db.check_health()
+    if not is_healthy:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "detail": "Database connectivity check failed"},
+        )
+    return {"status": "healthy"}
+
+
+class LoginRequest(BaseModel):
+    username: str = ""
+    password: str = ""
 
 
 class CasePayload(BaseModel):
@@ -84,9 +181,10 @@ class Medicine(BaseModel):
 
 
 class PrescribePatch(BaseModel):
-    doctor_name: str
+    doctor_name: Optional[str] = None
     medicines: List[Medicine] = Field(default_factory=list)
     notes: str = ""
+    only_if_unprescribed: bool = False
 
 
 class VitalsReading(BaseModel):
@@ -99,8 +197,39 @@ class VitalsReading(BaseModel):
     timestamp: str
 
 
-def _upload_path(session_id):
-    return os.path.join(UPLOADS_DIR, f"{session_id}.jpg")
+SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+$")
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+def _upload_path(session_id: str) -> str:
+    if not session_id or not SESSION_ID_PATTERN.match(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+
+    target = os.path.join(UPLOADS_DIR, f"{session_id}.jpg")
+    canonical_target = os.path.realpath(target)
+    canonical_base = os.path.realpath(UPLOADS_DIR)
+
+    try:
+        common = os.path.commonpath([canonical_target, canonical_base])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session path")
+
+    if common != canonical_base:
+        raise HTTPException(status_code=400, detail="Invalid session path")
+
+    return canonical_target
+
+
+def _is_valid_image(header: bytes) -> bool:
+    if len(header) < 12:
+        return False
+    if header.startswith(b"\xff\xd8\xff"):
+        return True
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return True
+    return False
 
 
 UPLOAD_PAGE = """<!doctype html>
@@ -161,11 +290,56 @@ def upload_page(session_id: str):
     return UPLOAD_PAGE.format(session_id=session_id)
 
 
-@app.post("/upload/{session_id}", response_class=HTMLResponse)
-def upload_photo(session_id: str, file: UploadFile = File(...)):
+@app.post(
+    "/upload/{session_id}",
+    response_class=HTMLResponse,
+    dependencies=[Depends(rate_limit("upload", max_requests=10, window_seconds=60))],
+)
+async def upload_photo(session_id: str, file: UploadFile = File(...)):
     path = _upload_path(session_id)
+
+    content_type = (file.content_type or "").lower()
+    if content_type and not (content_type.startswith("image/") or content_type == "application/octet-stream"):
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded file must be an image (JPEG, PNG, or WebP)",
+        )
+
+    total_bytes = 0
+    header_bytes = bytearray()
+    chunk_size = 64 * 1024
+
     with open(path, "wb") as handle:
-        handle.write(file.file.read())
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > MAX_UPLOAD_SIZE:
+                handle.close()
+                if os.path.exists(path):
+                    os.remove(path)
+                raise HTTPException(
+                    status_code=413,
+                    detail="File exceeds maximum size of 10MB",
+                )
+            if len(header_bytes) < 16:
+                header_bytes.extend(chunk[: 16 - len(header_bytes)])
+            handle.write(chunk)
+
+    if total_bytes == 0:
+        if os.path.exists(path):
+            os.remove(path)
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    if not _is_valid_image(bytes(header_bytes)):
+        if os.path.exists(path):
+            os.remove(path)
+        raise HTTPException(
+            status_code=400,
+            detail="File content does not match a supported image format (JPEG, PNG, WebP)",
+        )
+
     db.save_session_upload(session_id, path)
     return CONFIRM_PAGE.format(session_id=session_id)
 
@@ -183,7 +357,54 @@ def upload_image(session_id: str):
     return FileResponse(path, media_type="image/jpeg")
 
 
-@app.post("/cases")
+@app.post("/auth/login", dependencies=[Depends(rate_limit("login", max_requests=5, window_seconds=60))])
+def auth_login(req: LoginRequest):
+    username_or_email = req.username.strip()
+    if not username_or_email or not req.password:
+        raise HTTPException(
+            status_code=400,
+            detail="Username/email and password are required",
+        )
+
+    doctor = db.get_doctor_by_username_or_email(username_or_email, include_password_hash=True)
+    if not doctor or not auth.verify_password(req.password, doctor.get("password_hash", "")):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username/email or password",
+        )
+
+    if not doctor.get("is_active"):
+        raise HTTPException(
+            status_code=401,
+            detail="Doctor account is disabled",
+        )
+
+    db.update_doctor_last_login(doctor["id"])
+    token = auth.create_access_token({
+        "sub": str(doctor["id"]),
+        "username": doctor["username"],
+        "role": doctor.get("role", "doctor"),
+    })
+
+    safe_doctor = db.get_doctor_by_id(doctor["id"], include_password_hash=False)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "doctor": safe_doctor,
+    }
+
+
+@app.get("/auth/me")
+def auth_me(doctor: dict = Depends(get_current_doctor)):
+    return doctor
+
+
+@app.post("/auth/logout")
+def auth_logout():
+    return {"ok": True, "message": "Logged out successfully"}
+
+
+@app.post("/cases", dependencies=[Depends(rate_limit("cases", max_requests=10, window_seconds=60))])
 def create_case(payload: CasePayload):
     data = payload.model_dump()
     case_id = db.save_case(data)
@@ -192,13 +413,26 @@ def create_case(payload: CasePayload):
     return {"id": case_id}
 
 
+@app.get("/cases")
+def all_cases(doctor: dict = Depends(get_current_doctor)):
+    return db.list_all_cases()
+
+
 @app.get("/cases/open")
-def open_cases():
+def open_cases(doctor: dict = Depends(get_current_doctor)):
     return db.list_open_cases()
 
 
+@app.get("/cases/{case_id}/patient-status")
+def patient_case_status(case_id: int):
+    status_data = db.get_patient_case_status(case_id)
+    if status_data is None:
+        raise HTTPException(status_code=404, detail="case not found")
+    return status_data
+
+
 @app.get("/cases/{case_id}")
-def read_case(case_id: int):
+def read_case(case_id: int, doctor: dict = Depends(get_current_doctor)):
     case = db.get_case(case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="case not found")
@@ -206,23 +440,55 @@ def read_case(case_id: int):
 
 
 @app.patch("/cases/{case_id}/review")
-def review_case(case_id: int, patch: ReviewPatch):
+def review_case(
+    case_id: int,
+    patch: ReviewPatch,
+    doctor: dict = Depends(get_current_doctor),
+):
     if db.get_case(case_id) is None:
         raise HTTPException(status_code=404, detail="case not found")
-    db.mark_reviewed(case_id, patch.department_override)
+    db.mark_reviewed(
+        case_id,
+        doctor_id=doctor["id"],
+        doctor_name=doctor["full_name"],
+        department_override=patch.department_override,
+    )
     return db.get_case(case_id)
 
 
 @app.patch("/cases/{case_id}/prescribe")
-def prescribe(case_id: int, patch: PrescribePatch):
-    if db.get_case(case_id) is None:
+def prescribe(
+    case_id: int,
+    patch: PrescribePatch,
+    doctor: dict = Depends(get_current_doctor),
+):
+    case = db.get_case(case_id)
+    if case is None:
         raise HTTPException(status_code=404, detail="case not found")
+    if patch.only_if_unprescribed and case.get("status") == "prescribed":
+        raise HTTPException(status_code=409, detail="Case has already been prescribed")
     medicines = [medicine.model_dump() for medicine in patch.medicines]
-    return db.prescribe_case(case_id, patch.doctor_name, medicines, patch.notes)
+    try:
+        updated = db.prescribe_case(
+            case_id,
+            doctor_name=doctor["full_name"],
+            medicines=medicines,
+            notes=patch.notes,
+            doctor_id=doctor["id"],
+            only_if_unprescribed=patch.only_if_unprescribed,
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="case not found")
+        return updated
+    except db.CaseAlreadyPrescribedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @app.get("/cases/{case_id}/report")
-def case_report(case_id: int):
+def case_report(
+    case_id: int,
+    doctor: dict = Depends(get_current_doctor),
+):
     case = db.get_case(case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="case not found")
@@ -252,7 +518,10 @@ class TriageStepRequest(BaseModel):
     answer: str
 
 
-@app.post("/triage/start")
+@app.post(
+    "/triage/start",
+    dependencies=[Depends(rate_limit("triage_start", max_requests=10, window_seconds=60))],
+)
 def triage_start(req: TriageStartRequest):
     from core import agent_graph
 
@@ -278,6 +547,8 @@ def triage_start(req: TriageStartRequest):
             "image_analysis": None,
             "status": "",
             "session_id": req.session_id,
+            "question_type": "free_text",
+            "question_options": [],
         }
         if req.session_id:
             path = _upload_path(req.session_id)
@@ -294,7 +565,10 @@ def triage_start(req: TriageStartRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/triage/step")
+@app.post(
+    "/triage/step",
+    dependencies=[Depends(rate_limit("triage_step", max_requests=30, window_seconds=60))],
+)
 def triage_step(req: TriageStepRequest):
     from core import agent_graph
 
@@ -322,16 +596,45 @@ def triage_step(req: TriageStepRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/triage/transcribe")
-def triage_transcribe(file: UploadFile = File(...)):
-    import stt_client
+MAX_AUDIO_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+@app.post(
+    "/triage/transcribe",
+    dependencies=[Depends(rate_limit("triage_transcribe", max_requests=10, window_seconds=60))],
+)
+async def triage_transcribe(file: UploadFile = File(...)):
+    from core import ai_clients
 
     try:
-        audio_bytes = file.file.read()
+        total_size = 0
+        chunks = []
+        chunk_size = 64 * 1024
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            if total_size > MAX_AUDIO_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="Audio file exceeds maximum size of 10MB",
+                )
+            chunks.append(chunk)
+
+        audio_bytes = b"".join(chunks)
         if not audio_bytes:
             return {"text": ""}
-        text = stt_client.transcribe(audio_bytes)
+        text = ai_clients.transcribe(audio_bytes)
         return {"text": (text or "").strip()}
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error("Audio transcription failed: %s", e)
+        if config.is_production():
+            raise HTTPException(
+                status_code=500,
+                detail="Audio transcription service temporarily unavailable.",
+            )
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 

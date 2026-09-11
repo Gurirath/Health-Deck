@@ -22,10 +22,12 @@ import qrcode
 from fpdf import FPDF
 from fpdf.fonts import FontFace
 
-REPORTS_DIR = os.environ.get("HEALTHDECK_REPORTS_DIR", "reports")
+from core import config
+
+REPORTS_DIR = config.get_reports_dir()
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOGO_PATH = os.path.join(_PROJECT_ROOT, "assets", "logo.png")
-PUBLIC_BASE_URL = os.environ.get("HEALTHDECK_PUBLIC_BASE_URL", "http://localhost:8000")
+PUBLIC_BASE_URL = config.get_public_base_url()
 
 HOSPITAL_NAME = "OVERSIMPLIFIED HOSPITAL"
 CONTACT_LINE = "Gurirath · Aman · Keerthana · Aryaansh"
@@ -314,7 +316,8 @@ def _footer_block(pdf, case_id):
     _rule(pdf)
 
     footer_top = pdf.get_y()
-    report_url = f"{PUBLIC_BASE_URL}/cases/{case_id}/report"
+    report_base = config.get_public_base_url()
+    report_url = f"{report_base}/cases/{case_id}/report"
     qr_buffer = io.BytesIO()
     qrcode.make(report_url).save(qr_buffer, format="PNG")
     qr_buffer.seek(0)
@@ -338,8 +341,9 @@ def _footer_block(pdf, case_id):
 
 
 def generate_pdf(case_id, report_dict):
-    os.makedirs(REPORTS_DIR, exist_ok=True)
-    path = os.path.join(REPORTS_DIR, f"{case_id}.pdf")
+    reports_dir = config.get_reports_dir()
+    os.makedirs(reports_dir, exist_ok=True)
+    path = os.path.join(reports_dir, f"{case_id}.pdf")
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)

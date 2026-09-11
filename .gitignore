@@ -13,3 +13,14 @@ healthdeck.db
 
 uploads/
 reports/
+
+# OS metadata
+.DS_Store
+*.DS_Store
+
+# Environment variants
+.env.*
+!.env.example
+
+# Cache directories
+.cache/

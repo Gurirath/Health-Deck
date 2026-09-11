@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-healthdeck_production}
+      POSTGRES_USER: ${POSTGRES_USER:-healthdeck_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-healthdeck_secure_password}
+    volumes:
+      - healthdeck_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-healthdeck_user} -d $${POSTGRES_DB:-healthdeck_production}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - healthdeck_internal
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HEALTHDECK_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-healthdeck_user}:${POSTGRES_PASSWORD:-healthdeck_secure_password}@db:5432/${POSTGRES_DB:-healthdeck_production}
+      HEALTHDECK_JWT_SECRET: ${HEALTHDECK_JWT_SECRET}
+      HEALTHDECK_PUBLIC_BASE_URL: ${HEALTHDECK_PUBLIC_BASE_URL}
+      HEALTHDECK_ALLOWED_ORIGINS: ${HEALTHDECK_ALLOWED_ORIGINS}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      HEALTHDECK_UPLOADS_DIR: /app/uploads
+      HEALTHDECK_REPORTS_DIR: /app/reports
+      PORT: 8000
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    volumes:
+      - healthdeck_uploads:/app/uploads
+      - healthdeck_reports:/app/reports
+    networks:
+      - healthdeck_internal
+
+volumes:
+  healthdeck_pgdata:
+    driver: local
+  healthdeck_uploads:
+    driver: local
+  healthdeck_reports:
+    driver: local
+
+networks:
+  healthdeck_internal:
+    driver: bridge

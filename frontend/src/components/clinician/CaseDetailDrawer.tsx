@@ -15,10 +15,12 @@ import {
   ExternalLink,
   ShieldCheck,
   Stethoscope,
+  Loader2,
 } from 'lucide-react';
 import type { CaseRecord, Medicine } from '../../types/triage';
 import { PrimaryButton } from '../common/PrimaryButton';
 import { ApiService } from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
 
 interface CaseDetailDrawerProps {
   caseRecord: CaseRecord;
@@ -41,7 +43,7 @@ export const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
   onClose,
   onCaseUpdated,
 }) => {
-  const [doctorName, setDoctorName] = useState(caseRecord.doctor_name || 'Dr. Rao');
+  const { currentUser } = useAuth();
   const [departmentOverride, setDepartmentOverride] = useState(
     caseRecord.department_override || caseRecord.department || 'General Physician'
   );
@@ -53,7 +55,11 @@ export const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
   const [doctorNotes, setDoctorNotes] = useState(caseRecord.doctor_notes || '');
   const [isSubmittingPrescription, setIsSubmittingPrescription] = useState(false);
   const [isUpdatingDept, setIsUpdatingDept] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+
+  const effectiveDoctorName =
+    caseRecord.doctor_name || currentUser?.full_name || 'Attending Physician';
 
   const isUrgent =
     caseRecord.escalate ||
@@ -76,10 +82,6 @@ export const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
 
   const handlePrescribe = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!doctorName.trim()) {
-      alert('Please provide doctor name');
-      return;
-    }
     const validMeds = medicines.filter((m) => m.name.trim().length > 0);
     if (validMeds.length === 0) {
       alert('Please add at least one valid medicine with a name.');
@@ -89,7 +91,7 @@ export const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
     setIsSubmittingPrescription(true);
     const { caseRecord: updated, error } = await ApiService.prescribeCase(
       caseRecord.id,
-      doctorName.trim(),
+      effectiveDoctorName,
       validMeds,
       doctorNotes.trim()
     );
@@ -101,6 +103,15 @@ export const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
       setTimeout(() => setActionSuccessMsg(null), 5000);
     } else {
       alert(error || 'Failed to save prescription.');
+    }
+  };
+
+  const handleDownloadReport = async () => {
+    setIsDownloadingPdf(true);
+    const res = await ApiService.downloadReport(caseRecord.id);
+    setIsDownloadingPdf(false);
+    if (!res.success) {
+      alert(res.error || 'Could not download hospital report PDF.');
     }
   };
 
@@ -150,15 +161,19 @@ export const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
 
           <div className="flex items-center gap-2">
             {caseRecord.status === 'prescribed' && (
-              <a
-                href={ApiService.getReportUrl(caseRecord.id)}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#2B605E] text-white text-xs font-bold hover:bg-[#204948] transition-all shadow-sm"
+              <button
+                type="button"
+                onClick={handleDownloadReport}
+                disabled={isDownloadingPdf}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#2B605E] text-white text-xs font-bold hover:bg-[#204948] transition-all shadow-sm cursor-pointer disabled:opacity-60"
               >
-                <Download className="w-4 h-4" />
-                <span>PDF Care Report</span>
-              </a>
+                {isDownloadingPdf ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Download className="w-4 h-4" />
+                )}
+                <span>{isDownloadingPdf ? 'Downloading...' : 'PDF Care Report'}</span>
+              </button>
             )}
 
             <button
@@ -405,16 +420,18 @@ export const CaseDetailDrawer: React.FC<CaseDetailDrawerProps> = ({
             <form onSubmit={handlePrescribe} className="flex flex-col gap-4">
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-[#60435F]/70 block mb-1.5">
-                  Attending Doctor Name
+                  Attending Doctor (Authenticated Identity)
                 </label>
-                <input
-                  type="text"
-                  value={doctorName}
-                  onChange={(e) => setDoctorName(e.target.value)}
-                  placeholder="e.g., Dr. Aman Rao, MD"
-                  required
-                  className="w-full text-sm p-3 rounded-xl bg-[#FDF7FA] border border-[#E2A3C7]/40 text-[#60435F] font-semibold focus:outline-none focus:ring-2 focus:ring-[#D67AB1]/40"
-                />
+                <div className="flex items-center justify-between p-3 rounded-xl bg-[#FDF7FA] border border-[#E2A3C7]/40 text-[#60435F]">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-[#2B605E]" />
+                    <span className="text-sm font-bold">{effectiveDoctorName}</span>
+                  </div>
+                  <span className="text-[11px] font-semibold text-[#2B605E] bg-[#A8DCD9]/30 px-2.5 py-0.5 rounded-md">
+                    {currentUser?.department || caseRecord.department || 'Verified Staff'}
+                    {currentUser?.medical_license ? ` • ${currentUser.medical_license}` : ''}
+                  </span>
+                </div>
               </div>
 
               {/* Medicine Table Rows */}

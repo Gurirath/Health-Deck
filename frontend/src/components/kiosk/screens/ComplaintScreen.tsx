@@ -66,7 +66,7 @@ export const ComplaintScreen: React.FC<ComplaintScreenProps> = ({
   const [text, setText] = useState(initialComplaint);
   const [recState, setRecState] = useState<SpeechRecordingState>('idle');
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [activeSession, setActiveSession] = useState<AudioRecorderSession | null>(null);
+  const activeSessionRef = React.useRef<AudioRecorderSession | null>(null);
 
   const locKey = symptomLocation.toLowerCase();
   const locationLabel = LOCATION_NAMES[locKey] || symptomLocation;
@@ -77,7 +77,7 @@ export const ComplaintScreen: React.FC<ComplaintScreenProps> = ({
 
   const toggleVoice = async () => {
     if (isRecording) {
-      activeSession?.stop();
+      activeSessionRef.current?.stop();
     } else {
       setVoiceError(null);
       const session = await SpeechService.startRecording(
@@ -89,20 +89,24 @@ export const ComplaintScreen: React.FC<ComplaintScreenProps> = ({
           setVoiceError(err);
         }
       );
-      setActiveSession(session);
+      activeSessionRef.current = session;
     }
   };
 
   useEffect(() => {
     return () => {
-      activeSession?.cancel();
+      activeSessionRef.current?.cancel();
+      activeSessionRef.current = null;
     };
-  }, [activeSession]);
+  }, []);
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!text.trim() || isTranscribing) return;
-    if (isRecording) activeSession?.cancel();
+    if (isRecording) {
+      activeSessionRef.current?.cancel();
+      activeSessionRef.current = null;
+    }
     onSubmit(text.trim());
   };
 

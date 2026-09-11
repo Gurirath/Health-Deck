@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, MicOff, Send, ArrowRight, Sparkles, Clock, AlertTriangle, Loader2 } from 'lucide-react';
+import { Mic, MicOff, Send, ArrowRight, Sparkles, AlertTriangle, Loader2 } from 'lucide-react';
 import { NiaCharacter } from '../../mascot/NiaCharacter';
 import { NiaSpeechBubble } from '../../mascot/NiaSpeechBubble';
 import { PrimaryButton } from '../../common/PrimaryButton';
@@ -9,31 +9,17 @@ import { SpeechService, type SpeechRecordingState, type AudioRecorderSession } f
 
 interface ConversationScreenProps {
   currentQuestion: string;
+  questionOptions?: string[];
+  questionType?: string;
   transcript: TranscriptTurn[];
   isSubmitting?: boolean;
   onAnswer: (answer: string) => void;
 }
 
-// Dynamically generate quick answer chips depending on question keywords
-function getContextualChips(question: string): string[] {
-  const q = question.toLowerCase();
-  if (q.includes('pain') || q.includes('severe') || q.includes('describe') || q.includes('intensity')) {
-    return ['Mild / Barely noticeable', 'Moderate / Uncomfortable', 'Severe / Intense pain', 'Comes and goes in waves'];
-  }
-  if (q.includes('long') || q.includes('duration') || q.includes('when') || q.includes('start')) {
-    return ['Started today', 'Past 1–2 days', 'About a week ago', 'More than two weeks'];
-  }
-  if (q.includes('fever') || q.includes('chills') || q.includes('temperature')) {
-    return ['Yes, feeling feverish & chills', 'Mild warmth, no high fever', 'No fever at all'];
-  }
-  if (q.includes('other') || q.includes('anything else') || q.includes('associated') || q.includes('sensations')) {
-    return ['No other symptoms', 'Mild fatigue & tiredness', 'Headache & nausea', 'Loss of appetite'];
-  }
-  return ['Yes, definitely', 'No, not really', 'Mildly / A little bit', 'Unsure / Difficult to say'];
-}
-
 export const ConversationScreen: React.FC<ConversationScreenProps> = ({
   currentQuestion,
+  questionOptions,
+  questionType = 'free_text',
   transcript,
   isSubmitting = false,
   onAnswer,
@@ -41,15 +27,17 @@ export const ConversationScreen: React.FC<ConversationScreenProps> = ({
   const [typedAnswer, setTypedAnswer] = useState('');
   const [recState, setRecState] = useState<SpeechRecordingState>('idle');
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [activeSession, setActiveSession] = useState<AudioRecorderSession | null>(null);
+  const activeSessionRef = useRef<AudioRecorderSession | null>(null);
 
-  const chips = getContextualChips(currentQuestion || 'How are your symptoms progressing?');
+  const hasStructuredOptions = Boolean(questionOptions && questionOptions.length > 0);
+  const options = questionOptions || [];
+
   const isRecording = recState === 'recording';
   const isTranscribing = recState === 'transcribing';
 
   const toggleVoice = async () => {
     if (isRecording) {
-      activeSession?.stop();
+      activeSessionRef.current?.stop();
     } else {
       setVoiceError(null);
       const session = await SpeechService.startRecording(
@@ -61,20 +49,24 @@ export const ConversationScreen: React.FC<ConversationScreenProps> = ({
           setVoiceError(err);
         }
       );
-      setActiveSession(session);
+      activeSessionRef.current = session;
     }
   };
 
   useEffect(() => {
     return () => {
-      activeSession?.cancel();
+      activeSessionRef.current?.cancel();
+      activeSessionRef.current = null;
     };
-  }, [activeSession]);
+  }, []);
 
   const handleSend = (textToSend?: string) => {
     const finalAnswer = textToSend || typedAnswer;
     if (!finalAnswer.trim() || isSubmitting || isTranscribing) return;
-    if (isRecording) activeSession?.cancel();
+    if (isRecording) {
+      activeSessionRef.current?.cancel();
+      activeSessionRef.current = null;
+    }
     onAnswer(finalAnswer.trim());
     setTypedAnswer('');
   };
@@ -92,40 +84,52 @@ export const ConversationScreen: React.FC<ConversationScreenProps> = ({
         />
         <NiaSpeechBubble
           message={currentQuestion || "How would you describe what you're experiencing?"}
-          subMessage="Tap a quick response below or speak with Nia."
+          subMessage={
+            hasStructuredOptions
+              ? 'Select the closest option below or speak directly with Nia.'
+              : 'Tap to speak with Nia or type your response below.'
+          }
           speaking={isRecording}
         />
       </div>
 
-      {/* Main Focus Card: Quick Touch Selections + Voice */}
+      {/* Main Focus Card: Structured Selections (if provided) + Voice/Text Input */}
       <div className="w-full max-w-2xl bg-white/90 backdrop-blur-2xl rounded-3xl p-6 sm:p-8 border border-white/85 shadow-[0_20px_45px_-8px_rgba(96,67,95,0.1)] mb-6 flex flex-col gap-6">
-        <div>
-          <label className="text-xs font-bold uppercase tracking-wider text-[#60435F]/70 mb-3 block">
-            Quick Responses
-          </label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {chips.map((chip) => (
-              <motion.button
-                key={chip}
-                type="button"
-                whileHover={{ y: -2, scale: 1.01 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => handleSend(chip)}
-                disabled={isSubmitting || isTranscribing}
-                className="p-4 rounded-2xl bg-[#FDF7FA] hover:bg-[#E2A3C7]/20 border border-[#E2A3C7]/40 text-[#60435F] font-bold text-sm text-left transition-all hover:border-[#D67AB1] hover:shadow-md cursor-pointer disabled:opacity-50"
-              >
-                {chip}
-              </motion.button>
-            ))}
+        {hasStructuredOptions && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-xs font-bold uppercase tracking-wider text-[#60435F]/70 block">
+                {questionType === 'single_choice' ? 'Choose an option' : 'Suggested responses'}
+              </label>
+              <span className="text-[11px] font-medium text-[#60435F]/50">Tap to select</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {options.map((optionText) => (
+                <motion.button
+                  key={optionText}
+                  type="button"
+                  whileHover={{ y: -2, scale: 1.01 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => handleSend(optionText)}
+                  disabled={isSubmitting || isTranscribing}
+                  className="p-4 rounded-2xl bg-[#FDF7FA] hover:bg-[#E2A3C7]/20 border border-[#E2A3C7]/40 text-[#60435F] font-bold text-sm text-left transition-all hover:border-[#D67AB1] hover:shadow-md cursor-pointer disabled:opacity-50 flex items-center justify-between group"
+                >
+                  <span className="leading-snug">{optionText}</span>
+                  <ArrowRight className="w-4 h-4 text-[#D67AB1] shrink-0 opacity-40 group-hover:opacity-100 transition-opacity ml-2" />
+                </motion.button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Voice Option Divider */}
-        <div className="flex items-center gap-4 my-1">
-          <div className="flex-1 h-px bg-[#E2A3C7]/30" />
-          <span className="text-xs font-bold uppercase tracking-wider text-[#60435F]/40">or speak naturally</span>
-          <div className="flex-1 h-px bg-[#E2A3C7]/30" />
-        </div>
+        {hasStructuredOptions && (
+          <div className="flex items-center gap-4 my-0">
+            <div className="flex-1 h-px bg-[#E2A3C7]/30" />
+            <span className="text-xs font-bold uppercase tracking-wider text-[#60435F]/40">or speak naturally</span>
+            <div className="flex-1 h-px bg-[#E2A3C7]/30" />
+          </div>
+        )}
 
         {/* Spoken / Typed Input Bar */}
         <div className="flex flex-col gap-2">

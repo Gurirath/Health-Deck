@@ -5,7 +5,7 @@ import type { Vitals } from '../../../types/triage';
 import { NiaCharacter } from '../../mascot/NiaCharacter';
 import { NiaSpeechBubble } from '../../mascot/NiaSpeechBubble';
 import { PrimaryButton } from '../../common/PrimaryButton';
-import { getVitalStatus, VITALS_META } from '../../../constants/vitalsDefaults';
+import { getVitalEvaluation, getBloodPressureStatus, VITALS_META } from '../../../constants/vitalsDefaults';
 
 interface VitalsScreenProps {
   initialVitals: Vitals;
@@ -20,16 +20,16 @@ export const VitalsScreen: React.FC<VitalsScreenProps> = ({ initialVitals, onCon
     setVitals((prev) => ({ ...prev, [key]: val }));
   };
 
-  const hrStatus = getVitalStatus('hr', vitals.hr);
-  const spo2Status = getVitalStatus('spo2', vitals.spo2);
-  const tempStatus = getVitalStatus('temp_c', vitals.temp_c);
-  const bpStatus = getVitalStatus('systolic_bp', vitals.systolic_bp);
+  const hrEval = getVitalEvaluation('hr', vitals.hr);
+  const spo2Eval = getVitalEvaluation('spo2', vitals.spo2);
+  const tempEval = getVitalEvaluation('temp_c', vitals.temp_c);
+  const bpEval = getBloodPressureStatus(vitals.systolic_bp, vitals.diastolic_bp);
 
   const hasUrgent =
-    hrStatus === 'urgent' ||
-    spo2Status === 'urgent' ||
-    tempStatus === 'urgent' ||
-    bpStatus === 'urgent';
+    hrEval.status === 'urgent' ||
+    spo2Eval.status === 'urgent' ||
+    tempEval.status === 'urgent' ||
+    bpEval.status === 'urgent';
 
   return (
     <div className="w-full max-w-5xl mx-auto px-4 py-6 flex flex-col items-center">
@@ -59,7 +59,7 @@ export const VitalsScreen: React.FC<VitalsScreenProps> = ({ initialVitals, onCon
                 diastolic_bp: 80,
               })
             }
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all ${
+            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
               !hasUrgent
                 ? 'bg-[#A8DCD9]/30 text-[#2B605E] border border-[#A8DCD9]/70'
                 : 'text-[#60435F]/70 hover:text-[#60435F]'
@@ -77,7 +77,7 @@ export const VitalsScreen: React.FC<VitalsScreenProps> = ({ initialVitals, onCon
                 diastolic_bp: 95,
               })
             }
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all ${
+            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
               hasUrgent
                 ? 'bg-[#E14D62]/20 text-[#C42239] border border-[#E14D62]/50'
                 : 'text-[#60435F]/70 hover:text-[#60435F]'
@@ -99,16 +99,8 @@ export const VitalsScreen: React.FC<VitalsScreenProps> = ({ initialVitals, onCon
             <div className="w-12 h-12 rounded-2xl bg-[#D67AB1]/15 text-[#D67AB1] flex items-center justify-center">
               <Heart className="w-6 h-6 fill-[#D67AB1]/20 text-[#D67AB1]" />
             </div>
-            <span
-              className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                hrStatus === 'urgent'
-                  ? 'bg-[#E14D62]/15 text-[#C42239]'
-                  : hrStatus === 'warning'
-                  ? 'bg-[#D9822B]/15 text-[#9B5510]'
-                  : 'bg-[#A8DCD9]/30 text-[#2B605E]'
-              }`}
-            >
-              {hrStatus === 'urgent' ? 'Attention' : hrStatus === 'warning' ? 'Elevated' : 'Normal'}
+            <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${hrEval.badgeClass}`}>
+              {hrEval.label}
             </span>
           </div>
           <div>
@@ -140,16 +132,8 @@ export const VitalsScreen: React.FC<VitalsScreenProps> = ({ initialVitals, onCon
             <div className="w-12 h-12 rounded-2xl bg-[#A8DCD9]/30 text-[#2B605E] flex items-center justify-center">
               <Activity className="w-6 h-6 text-[#2B605E]" />
             </div>
-            <span
-              className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                spo2Status === 'urgent'
-                  ? 'bg-[#E14D62]/15 text-[#C42239]'
-                  : spo2Status === 'warning'
-                  ? 'bg-[#D9822B]/15 text-[#9B5510]'
-                  : 'bg-[#A8DCD9]/30 text-[#2B605E]'
-              }`}
-            >
-              {spo2Status === 'urgent' ? 'Low Oxygen' : spo2Status === 'warning' ? 'Borderline' : 'Optimal'}
+            <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${spo2Eval.badgeClass}`}>
+              {spo2Eval.label}
             </span>
           </div>
           <div>
@@ -181,16 +165,8 @@ export const VitalsScreen: React.FC<VitalsScreenProps> = ({ initialVitals, onCon
             <div className="w-12 h-12 rounded-2xl bg-[#E2A3C7]/25 text-[#96376D] flex items-center justify-center">
               <Thermometer className="w-6 h-6 text-[#96376D]" />
             </div>
-            <span
-              className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                tempStatus === 'urgent'
-                  ? 'bg-[#E14D62]/15 text-[#C42239]'
-                  : tempStatus === 'warning'
-                  ? 'bg-[#D9822B]/15 text-[#9B5510]'
-                  : 'bg-[#A8DCD9]/30 text-[#2B605E]'
-              }`}
-            >
-              {tempStatus === 'urgent' ? 'High Fever' : tempStatus === 'warning' ? 'Mild Fever' : 'Normal'}
+            <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${tempEval.badgeClass}`}>
+              {tempEval.label}
             </span>
           </div>
           <div>
@@ -223,16 +199,8 @@ export const VitalsScreen: React.FC<VitalsScreenProps> = ({ initialVitals, onCon
             <div className="w-12 h-12 rounded-2xl bg-[#60435F]/10 text-[#60435F] flex items-center justify-center">
               <span className="font-black text-sm">BP</span>
             </div>
-            <span
-              className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                bpStatus === 'urgent'
-                  ? 'bg-[#E14D62]/15 text-[#C42239]'
-                  : bpStatus === 'warning'
-                  ? 'bg-[#D9822B]/15 text-[#9B5510]'
-                  : 'bg-[#A8DCD9]/30 text-[#2B605E]'
-              }`}
-            >
-              {bpStatus === 'urgent' ? 'High BP' : bpStatus === 'warning' ? 'Elevated' : 'Optimal'}
+            <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${bpEval.badgeClass}`}>
+              {bpEval.label}
             </span>
           </div>
           <div>
@@ -243,17 +211,37 @@ export const VitalsScreen: React.FC<VitalsScreenProps> = ({ initialVitals, onCon
               <span className="text-2xl font-bold text-[#60435F]/80">{vitals.diastolic_bp}</span>
               <span className="text-xs font-bold text-[#60435F]/60 ml-1">mmHg</span>
             </div>
-            <p className="text-xs text-[#60435F]/65">Target: 120/80 mmHg</p>
+            <p className="text-xs text-[#60435F]/65">{bpEval.description || 'Target: 120/80 mmHg'}</p>
           </div>
-          <div className="mt-4 pt-3 border-t border-[#E2A3C7]/20 flex items-center gap-2">
-            <input
-              type="range"
-              min={80}
-              max={190}
-              value={vitals.systolic_bp}
-              onChange={(e) => updateVital('systolic_bp', Number(e.target.value))}
-              className="w-full accent-[#60435F] cursor-pointer"
-            />
+          <div className="mt-4 pt-3 border-t border-[#E2A3C7]/20 flex flex-col gap-2">
+            <div>
+              <div className="flex justify-between text-[10px] text-[#60435F]/70 font-semibold mb-0.5">
+                <span>Systolic</span>
+                <span>{vitals.systolic_bp} mmHg</span>
+              </div>
+              <input
+                type="range"
+                min={70}
+                max={200}
+                value={vitals.systolic_bp}
+                onChange={(e) => updateVital('systolic_bp', Number(e.target.value))}
+                className="w-full accent-[#60435F] cursor-pointer"
+              />
+            </div>
+            <div>
+              <div className="flex justify-between text-[10px] text-[#60435F]/70 font-semibold mb-0.5">
+                <span>Diastolic</span>
+                <span>{vitals.diastolic_bp} mmHg</span>
+              </div>
+              <input
+                type="range"
+                min={40}
+                max={130}
+                value={vitals.diastolic_bp}
+                onChange={(e) => updateVital('diastolic_bp', Number(e.target.value))}
+                className="w-full accent-[#60435F] cursor-pointer"
+              />
+            </div>
           </div>
         </motion.div>
       </div>
