@@ -1,6 +1,7 @@
-"""Vitals capture, abstracted so the agent and UI never touch the source directly.
+"""Kiosk input providers, abstracted so the agent and UI never touch a
+source directly.
 
-A provider returns a dict with these five keys:
+Vitals providers return a dict with these five keys:
 
     spo2          blood oxygen saturation, percent
     temp_c        body temperature, degrees Celsius
@@ -8,13 +9,16 @@ A provider returns a dict with these five keys:
     systolic_bp   systolic blood pressure, mmHg
     diastolic_bp  diastolic blood pressure, mmHg
 
-Swap ManualVitalsProvider for SensorVitalsProvider once the hardware module
-is ready; nothing else in the app changes.
+Symptom-location providers return one of BODY_REGIONS (or a finer string a
+future 3D body map produces). Swapping in a real sensor module or a tappable
+body map means adding a new class here; nothing else in the app changes.
 """
 
 import streamlit as st
 
 VITALS_KEYS = ("spo2", "temp_c", "hr", "systolic_bp", "diastolic_bp")
+
+BODY_REGIONS = ["head", "chest", "abdomen", "limbs", "throat", "skin", "other"]
 
 
 class VitalsProvider:
@@ -58,4 +62,28 @@ class SensorVitalsProvider(VitalsProvider):
             "SensorVitalsProvider is a stub. Implement get_vitals() to read the "
             "sensor module and return a dict with keys spo2, temp_c, hr, "
             "systolic_bp, diastolic_bp."
+        )
+
+
+class SymptomLocationProvider:
+    """Interface for capturing the body location of the chief complaint."""
+
+    def get_location(self):
+        raise NotImplementedError
+
+
+class SelectboxLocationProvider(SymptomLocationProvider):
+    """The current input: a single selectbox of coarse body regions."""
+
+    def get_location(self):
+        return st.selectbox("Where is the problem?", BODY_REGIONS)
+
+
+class BodyMapLocationProvider(SymptomLocationProvider):
+    """Reserved for the Three.js tappable body map. Not built yet."""
+
+    def get_location(self):
+        raise NotImplementedError(
+            "BodyMapLocationProvider is a placeholder for the glTF body map. "
+            "Implement get_location() to return the tapped region as a string."
         )
