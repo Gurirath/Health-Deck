@@ -9,9 +9,7 @@ export interface AudioRecorderSession {
 }
 
 export class SpeechService {
-  private static mediaRecorder: MediaRecorder | null = null;
-  private static audioStream: MediaStream | null = null;
-  private static audioChunks: Blob[] = [];
+  private static activeRecorderSession: AudioRecorderSession | null = null;
 
   static isSupported(): boolean {
     return (
@@ -33,10 +31,33 @@ export class SpeechService {
       return { stop: () => {}, cancel: () => {} };
     }
 
+    // If an existing session is running, cleanly stop/cancel it first
+    if (this.activeRecorderSession) {
+      try {
+        this.activeRecorderSession.cancel();
+      } catch {}
+      this.activeRecorderSession = null;
+    }
+
+    let stream: MediaStream | null = null;
+    let recorder: MediaRecorder | null = null;
+    const audioChunks: Blob[] = [];
+    let isCancelled = false;
+    let isStopped = false;
+
+    const cleanupStream = () => {
+      if (stream) {
+        stream.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch {}
+        });
+        stream = null;
+      }
+    };
+
     try {
-      this.audioChunks = [];
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.audioStream = stream;
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       // Determine best supported mime type
       const mimeType = [
@@ -48,33 +69,38 @@ export class SpeechService {
       ].find((type) => MediaRecorder.isTypeSupported(type)) || '';
 
       const options = mimeType ? { mimeType } : undefined;
-      const recorder = new MediaRecorder(stream, options);
-      this.mediaRecorder = recorder;
+      recorder = new MediaRecorder(stream, options);
 
-      let isCancelled = false;
-
-      recorder.ondataavailable = (event) => {
+      recorder.ondataavailable = (event: BlobEvent) => {
         if (event.data && event.data.size > 0) {
-          this.audioChunks.push(event.data);
+          audioChunks.push(event.data);
         }
       };
 
       recorder.onstop = async () => {
-        // Stop all audio tracks
-        stream.getTracks().forEach((track) => track.stop());
+        cleanupStream();
 
         if (isCancelled) {
+          audioChunks.length = 0;
           onStateChange('idle');
           return;
         }
 
-        if (this.audioChunks.length === 0) {
+        if (audioChunks.length === 0) {
           onStateChange('idle');
+          onError('No audio recorded. Please speak clearly or type below.');
           return;
         }
 
-        const audioBlob = new Blob(this.audioChunks, { type: recorder.mimeType || 'audio/webm' });
-        this.audioChunks = [];
+        const resolvedMime = recorder?.mimeType || mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunks, { type: resolvedMime });
+        audioChunks.length = 0;
+
+        if (audioBlob.size === 0) {
+          onStateChange('idle');
+          onError('Empty audio recording. Please try speaking again or type below.');
+          return;
+        }
 
         onStateChange('transcribing');
         const { text, error } = await ApiService.transcribeAudio(audioBlob);
@@ -82,8 +108,8 @@ export class SpeechService {
         if (error) {
           onError(error);
           onStateChange('error');
-        } else if (text) {
-          onResult(text);
+        } else if (text && text.trim()) {
+          onResult(text.trim());
           onStateChange('idle');
         } else {
           onError('No speech detected. Please speak clearly or type below.');
@@ -92,7 +118,7 @@ export class SpeechService {
       };
 
       recorder.onerror = (e: any) => {
-        stream.getTracks().forEach((track) => track.stop());
+        cleanupStream();
         onError(e.error?.message || 'Recording error occurred.');
         onStateChange('error');
       };
@@ -100,23 +126,51 @@ export class SpeechService {
       recorder.start(250); // collect 250ms chunks
       onStateChange('recording');
 
-      return {
+      const session: AudioRecorderSession = {
         stop: () => {
-          if (recorder.state === 'recording') {
-            recorder.stop();
+          if (isStopped || isCancelled) return;
+          isStopped = true;
+          if (recorder && recorder.state === 'recording') {
+            try {
+              recorder.stop();
+            } catch {
+              cleanupStream();
+              onStateChange('idle');
+            }
+          } else {
+            cleanupStream();
+            onStateChange('idle');
+          }
+          if (SpeechService.activeRecorderSession === session) {
+            SpeechService.activeRecorderSession = null;
           }
         },
         cancel: () => {
+          if (isCancelled) return;
           isCancelled = true;
-          if (recorder.state === 'recording') {
-            recorder.stop();
+          isStopped = true;
+          audioChunks.length = 0;
+          if (recorder && recorder.state === 'recording') {
+            try {
+              recorder.stop();
+            } catch {
+              cleanupStream();
+              onStateChange('idle');
+            }
           } else {
-            stream.getTracks().forEach((track) => track.stop());
+            cleanupStream();
             onStateChange('idle');
+          }
+          if (SpeechService.activeRecorderSession === session) {
+            SpeechService.activeRecorderSession = null;
           }
         },
       };
+
+      this.activeRecorderSession = session;
+      return session;
     } catch (err: any) {
+      cleanupStream();
       const errorMsg =
         err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
           ? 'Microphone permission denied. Please allow microphone access or type below.'

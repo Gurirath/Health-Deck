@@ -225,10 +225,46 @@ and `GET /cases/{id}/report` 404s before prescribing and returns the PDF after.
 ```bash
 python test_graph.py
 python test_backend.py
+python test_security.py
+python test_phase3_postgres.py
 ```
 
 Smoke-test the running backend with `curl http://localhost:8000/` or open
 <http://localhost:8000/docs>.
+
+## PostgreSQL Database & Migrations (Phase 3 / 3.5)
+
+Health Deck supports PostgreSQL via connection pooling (`psycopg_pool`) with a seamless SQLite fallback for local development:
+- **Production Mode** (`HEALTHDECK_ENV=production`): `DATABASE_URL` is mandatory. Missing or unreachable PostgreSQL terminates immediately with a fatal startup error; silent fallback to SQLite is strictly blocked.
+- **Development Mode** (`HEALTHDECK_ENV=development` or unset): Uses PostgreSQL if `DATABASE_URL` is configured, or automatically falls back to local `healthdeck.db` if omitted.
+
+### Required Connection String Shape:
+```bash
+DATABASE_URL=postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST>:<DB_PORT>/<DB_NAME>
+```
+
+### Versioned Schema Migrations:
+Schema migrations are tracked in `schema_migrations` and executed inside an atomic transaction:
+```bash
+# Check status of migrations
+python -m core.migrations status
+
+# Apply all pending migrations
+python -m core.migrations apply
+```
+
+### Historical Data Migration:
+Transfers existing SQLite cases, doctors, uploads, and vitals into PostgreSQL, advances sequences, and creates a read-only timestamped backup:
+```bash
+python scripts/migrate_sqlite_to_pg.py
+```
+
+### Real PostgreSQL Integration Validation:
+To validate the implementation against a real local PostgreSQL instance (Docker or local service):
+```bash
+export TEST_DATABASE_URL=postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST>:<DB_PORT>/<DB_NAME>
+python test_postgres_real_integration.py
+```
 
 ## Project layout
 

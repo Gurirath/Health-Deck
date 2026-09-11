@@ -30,6 +30,7 @@ Conversation so far:
 {history_text}
 
 Decide whether you have enough information to move to a decision, or whether you need one more follow-up question.
+If asking a follow-up question, also supply 3-4 concise, plain-language patient answer options for the touch kiosk screen (e.g. for pain severity: ["Mild (1-3)", "Moderate (4-6)", "Severe (7-8)", "Very severe (9-10)"]; for duration: ["Started today", "1-2 days", "3-5 days", "Over a week"]; for symptoms: ["Yes", "No", "Mildly", "Not sure"]). If the question is strictly open-ended and cannot be answered via choices, set question_type to "free_text" and question_options to [].
 
 Respond with JSON only, in exactly this shape:
 {{
@@ -41,7 +42,9 @@ Respond with JSON only, in exactly this shape:
     "aggravating_or_relieving_factors": "..."
   }},
   "ready_to_diagnose": true or false,
-  "next_question": "single follow-up question, empty string if ready_to_diagnose is true"
+  "next_question": "single follow-up question, empty string if ready_to_diagnose is true",
+  "question_type": "single_choice or free_text",
+  "question_options": ["option 1", "option 2", "option 3", "option 4"]
 }}
 """
 

@@ -37,6 +37,8 @@ export interface TriageState {
   ready_to_diagnose: boolean;
   red_flags: string[];
   next_question: string;
+  question_type?: 'single_choice' | 'free_text' | string;
+  question_options?: string[];
   diagnosis: DiagnosisData;
   raw_llm_response?: Record<string, any>;
   escalate: boolean;
@@ -79,10 +81,25 @@ export interface CaseRecord {
   reviewed_at?: string | null;
   status: 'pending' | 'prescribed' | string;
   doctor_name?: string | null;
+  reviewed_by_doctor_id?: number | null;
+  reviewed_by_doctor_name?: string | null;
+  prescribed_by_doctor_id?: number | null;
   prescription_medicines: Medicine[];
   doctor_notes?: string | null;
   prescribed_at?: string | null;
   report_pdf_path?: string | null;
+}
+
+export interface PatientCaseStatus {
+  case_id: number;
+  status: 'pending' | 'prescribed' | string;
+  reviewed: boolean;
+  reviewed_at?: string | null;
+  doctor_name?: string | null;
+  prescribed_at?: string | null;
+  prescription_medicines: Medicine[];
+  has_report: boolean;
+  effective_department: string;
 }
 
 export type BodyRegionId =
@@ -108,3 +125,26 @@ export type KioskScreen =
   | 'completion';
 
 export type AppMode = 'kiosk' | 'clinician';
+
+export interface DoctorUser {
+  id: number;
+  username: string;
+  email: string;
+  full_name: string;
+  medical_license: string;
+  department: string;
+  role: string;
+  created_at?: string;
+  last_login_at?: string | null;
+}
+
+export interface LoginCredentials {
+  username: string;
+  password: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  doctor: DoctorUser;
+}

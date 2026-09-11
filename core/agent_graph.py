@@ -36,6 +36,8 @@ class TriageState(TypedDict):
     image_analysis: Any
     status: str
     session_id: str
+    question_type: str
+    question_options: List[str]
 
 
 def extract_node(state: TriageState) -> TriageState:
@@ -46,6 +48,14 @@ def extract_node(state: TriageState) -> TriageState:
     state["extracted"] = merged
     state["ready_to_diagnose"] = bool(result.get("ready_to_diagnose", False))
     state["next_question"] = result.get("next_question", "")
+    raw_options = result.get("question_options")
+    if isinstance(raw_options, list):
+        state["question_options"] = [str(opt).strip() for opt in raw_options if str(opt).strip()]
+    else:
+        state["question_options"] = []
+    state["question_type"] = result.get(
+        "question_type", "single_choice" if state["question_options"] else "free_text"
+    )
     state["turn_count"] = state.get("turn_count", 0) + 1
     return state
 

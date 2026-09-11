@@ -1,22 +1,93 @@
-import type { CaseRecord, TriageState, Vitals, Medicine } from '../types/triage';
+import type {
+  CaseRecord,
+  TriageState,
+  Vitals,
+  Medicine,
+  DoctorUser,
+  LoginCredentials,
+  AuthResponse,
+  PatientCaseStatus,
+} from '../types/triage';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+export const TOKEN_STORAGE_KEY = 'healthdeck_token';
 
 export class ApiService {
+  private static token: string | null = null;
+  private static onUnauthorizedCallback: (() => void) | null = null;
+  private static isHandling401 = false;
+
+  static setToken(token: string | null): void {
+    this.token = token;
+    if (token) {
+      try {
+        sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+      } catch {}
+    } else {
+      try {
+        sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      } catch {}
+    }
+  }
+
+  static getToken(): string | null {
+    if (this.token) return this.token;
+    try {
+      const stored = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+      if (stored) {
+        this.token = stored;
+        return stored;
+      }
+    } catch {}
+    return null;
+  }
+
+  static setOnUnauthorized(cb: () => void): void {
+    this.onUnauthorizedCallback = cb;
+  }
+
+  private static triggerUnauthorized(): void {
+    if (this.onUnauthorizedCallback && !this.isHandling401) {
+      this.isHandling401 = true;
+      try {
+        this.onUnauthorizedCallback();
+      } finally {
+        setTimeout(() => {
+          this.isHandling401 = false;
+        }, 300);
+      }
+    }
+  }
+
   private static async request<T>(
     endpoint: string,
-    options: RequestInit = {}
-  ): Promise<{ data: T | null; error: string | null }> {
+    options: RequestInit = {},
+    isProtected = false,
+    suppressUnauthorized = false
+  ): Promise<{ data: T | null; error: string | null; status?: number }> {
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...((options.headers as Record<string, string>) || {}),
+      };
+
+      if (isProtected) {
+        const token = this.getToken();
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+      }
+
       const res = await fetch(`${API_BASE}${endpoint}`, {
         ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(options.headers || {}),
-        },
+        headers,
       });
 
       if (!res.ok) {
+        if (res.status === 401 && isProtected && !suppressUnauthorized && Boolean(this.getToken())) {
+          this.triggerUnauthorized();
+        }
+
         let errorMsg = `Backend Error (${res.status})`;
         try {
           const json = await res.json();
@@ -29,14 +100,49 @@ export class ApiService {
           const text = await res.text().catch(() => res.statusText);
           if (text) errorMsg = text;
         }
-        return { data: null, error: errorMsg };
+        return { data: null, error: errorMsg, status: res.status };
       }
 
       const data = await res.json();
-      return { data, error: null };
+      return { data, error: null, status: res.status };
     } catch (err: any) {
-      return { data: null, error: err.message || 'Could not connect to Health Deck backend on port 8000.' };
+      return {
+        data: null,
+        error: err.message || 'Could not connect to Health Deck backend on port 8000.',
+      };
     }
+  }
+
+  static async login(
+    credentials: LoginCredentials
+  ): Promise<{ data: AuthResponse | null; error: string | null }> {
+    const res = await this.request<AuthResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    });
+
+    if (res.data?.access_token) {
+      this.setToken(res.data.access_token);
+    }
+    return { data: res.data, error: res.error };
+  }
+
+  static async getMe(
+    tokenOverride?: string
+  ): Promise<{ doctor: DoctorUser | null; error: string | null; status?: number }> {
+    if (tokenOverride) {
+      this.setToken(tokenOverride);
+    }
+    const res = await this.request<DoctorUser>('/auth/me', {}, true, true);
+    return { doctor: res.data, error: res.error, status: res.status };
+  }
+
+  static async logout(): Promise<{ success: boolean }> {
+    this.setToken(null);
+    try {
+      await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+    } catch {}
+    return { success: true };
   }
 
   static async checkHealth(): Promise<boolean> {
@@ -137,27 +243,48 @@ export class ApiService {
     return { id: null, error: res.error || 'Could not file case to backend.' };
   }
 
-  static async getOpenCases(): Promise<{ cases: CaseRecord[]; error: string | null }> {
-    const res = await this.request<CaseRecord[]>('/cases/open');
+  static async getAllCases(): Promise<{ cases: CaseRecord[]; error: string | null }> {
+    const res = await this.request<CaseRecord[]>('/cases', {}, true);
     if (res.data) {
       return { cases: res.data, error: null };
     }
     return { cases: [], error: res.error };
   }
 
-  static async getCase(caseId: number): Promise<{ caseRecord: CaseRecord | null; error: string | null }> {
-    const res = await this.request<CaseRecord>(`/cases/${caseId}`);
+  static async getOpenCases(): Promise<{ cases: CaseRecord[]; error: string | null }> {
+    const res = await this.request<CaseRecord[]>('/cases/open', {}, true);
+    if (res.data) {
+      return { cases: res.data, error: null };
+    }
+    return { cases: [], error: res.error };
+  }
+
+  static async getCase(
+    caseId: number
+  ): Promise<{ caseRecord: CaseRecord | null; error: string | null }> {
+    const res = await this.request<CaseRecord>(`/cases/${caseId}`, {}, true);
     return { caseRecord: res.data, error: res.error };
+  }
+
+  static async getPatientStatus(
+    caseId: number
+  ): Promise<{ statusData: PatientCaseStatus | null; error: string | null }> {
+    const res = await this.request<PatientCaseStatus>(`/cases/${caseId}/patient-status`, {}, false);
+    return { statusData: res.data, error: res.error };
   }
 
   static async reviewCase(
     caseId: number,
     departmentOverride?: string
   ): Promise<{ success: boolean; error: string | null }> {
-    const res = await this.request<CaseRecord>(`/cases/${caseId}/review`, {
-      method: 'PATCH',
-      body: JSON.stringify({ department_override: departmentOverride || null }),
-    });
+    const res = await this.request<CaseRecord>(
+      `/cases/${caseId}/review`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ department_override: departmentOverride || null }),
+      },
+      true
+    );
     return { success: Boolean(res.data), error: res.error };
   }
 
@@ -167,15 +294,65 @@ export class ApiService {
     medicines: Medicine[],
     notes: string
   ): Promise<{ caseRecord: CaseRecord | null; error: string | null }> {
-    const res = await this.request<CaseRecord>(`/cases/${caseId}/prescribe`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        doctor_name: doctorName,
-        medicines,
-        notes,
-      }),
-    });
+    const res = await this.request<CaseRecord>(
+      `/cases/${caseId}/prescribe`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          doctor_name: doctorName,
+          medicines,
+          notes,
+        }),
+      },
+      true
+    );
     return { caseRecord: res.data, error: res.error };
+  }
+
+  static async downloadReport(
+    caseId: number
+  ): Promise<{ success: boolean; error: string | null }> {
+    try {
+      const headers: Record<string, string> = {};
+      const token = this.getToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`${API_BASE}/cases/${caseId}/report`, {
+        headers,
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          this.triggerUnauthorized();
+          return { success: false, error: 'Session expired. Please log in again.' };
+        }
+        let errorMsg = `Report Error (${res.status})`;
+        try {
+          const json = await res.json();
+          if (json.detail) errorMsg = json.detail;
+        } catch {
+          const text = await res.text().catch(() => res.statusText);
+          if (text) errorMsg = text;
+        }
+        return { success: false, error: errorMsg };
+      }
+
+      const blob = await res.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = `health_deck_case_${caseId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(objectUrl);
+
+      return { success: true, error: null };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to download report.' };
+    }
   }
 
   static getReportUrl(caseId: number): string {

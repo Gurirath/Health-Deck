@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { QrCode, Upload, CheckCircle2, ArrowRight, ShieldCheck, Image as ImageIcon } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { NiaCharacter } from '../../mascot/NiaCharacter';
 import { NiaSpeechBubble } from '../../mascot/NiaSpeechBubble';
 import { PrimaryButton } from '../../common/PrimaryButton';
@@ -19,9 +20,6 @@ export const PhotoUploadScreen: React.FC<PhotoUploadScreenProps> = ({
   const [uploadingDirect, setUploadingDirect] = useState(false);
 
   const uploadPageUrl = ApiService.getUploadPageUrl(sessionId);
-  const qrCodeApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
-    uploadPageUrl
-  )}&color=60-43-95&bgcolor=253-247-250`;
 
   // Poll for phone upload status every 2.5 seconds
   useEffect(() => {
@@ -107,10 +105,14 @@ export const PhotoUploadScreen: React.FC<PhotoUploadScreenProps> = ({
 
             {/* QR Frame with 2.5D styling */}
             <div className="p-4 rounded-3xl bg-[#FDF7FA] border-2 border-[#E2A3C7]/40 shadow-inner flex flex-col items-center">
-              <img
-                src={qrCodeApiUrl}
-                alt="Upload QR Code"
-                className="w-48 h-48 sm:w-56 sm:h-56 rounded-2xl"
+              <QRCodeSVG
+                value={uploadPageUrl}
+                size={220}
+                fgColor="#60435F"
+                bgColor="#FDF7FA"
+                level="M"
+                className="w-48 h-48 sm:w-56 sm:h-56 rounded-2xl p-1"
+                aria-label="Upload QR Code"
               />
               <p className="text-xs text-[#60435F]/60 mt-2 font-mono">Session #{sessionId.slice(0, 8)}</p>
             </div>

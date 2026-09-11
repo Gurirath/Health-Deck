@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { CheckCircle2, ShieldAlert, FileText, Download, RotateCcw, Clock, AlertTriangle, Pill } from 'lucide-react';
+import { CheckCircle2, ShieldAlert, FileText, RotateCcw, Clock, Pill } from 'lucide-react';
 import { NiaCharacter } from '../../mascot/NiaCharacter';
 import { NiaSpeechBubble } from '../../mascot/NiaSpeechBubble';
-import { PrimaryButton } from '../../common/PrimaryButton';
-import type { CaseRecord, TriageState } from '../../../types/triage';
+import type { PatientCaseStatus, TriageState } from '../../../types/triage';
 import { ApiService } from '../../../services/api';
 
 interface CompletionScreenProps {
@@ -18,7 +17,7 @@ export const CompletionScreen: React.FC<CompletionScreenProps> = ({
   finalState,
   onStartNew,
 }) => {
-  const [caseData, setCaseData] = useState<CaseRecord | null>(null);
+  const [caseData, setCaseData] = useState<PatientCaseStatus | null>(null);
   const [isPrescribed, setIsPrescribed] = useState(false);
 
   const isUrgent =
@@ -29,14 +28,14 @@ export const CompletionScreen: React.FC<CompletionScreenProps> = ({
   const department =
     caseData?.effective_department || finalState.department || 'General Physician';
 
-  // Live poll the backend for doctor prescription updates
+  // Live poll the backend for doctor prescription updates via public patient-safe endpoint
   useEffect(() => {
     let active = true;
     const checkCase = async () => {
-      const { caseRecord } = await ApiService.getCase(caseId);
-      if (active && caseRecord) {
-        setCaseData(caseRecord);
-        if (caseRecord.status === 'prescribed') {
+      const { statusData } = await ApiService.getPatientStatus(caseId);
+      if (active && statusData) {
+        setCaseData(statusData);
+        if (statusData.status === 'prescribed') {
           setIsPrescribed(true);
           return;
         }
@@ -161,15 +160,12 @@ export const CompletionScreen: React.FC<CompletionScreenProps> = ({
                 </div>
               </div>
 
-              <a
-                href={ApiService.getReportUrl(caseId)}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#2B605E] text-white text-xs font-bold hover:bg-[#204948] transition-all shadow-md"
-              >
-                <Download className="w-4 h-4" />
-                <span>Download Report PDF</span>
-              </a>
+              {caseData.has_report && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#2B605E]/15 text-[#2B605E] text-xs font-bold border border-[#2B605E]/30">
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Report Archived</span>
+                </div>
+              )}
             </div>
 
             {/* Prescribed Medicines Table */}
@@ -180,7 +176,7 @@ export const CompletionScreen: React.FC<CompletionScreenProps> = ({
                     <tr className="border-b border-[#E2A3C7]/30 text-[#60435F]/70">
                       <th className="py-1.5 px-2">Medicine</th>
                       <th className="py-1.5 px-2">Dosage / Day</th>
-                      <th className="py-1.5 px-2">Remark</th>
+                      <th className="py-1.5 px-2">Instructions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -194,12 +190,6 @@ export const CompletionScreen: React.FC<CompletionScreenProps> = ({
                   </tbody>
                 </table>
               </div>
-            )}
-
-            {caseData.doctor_notes && (
-              <p className="text-xs text-[#60435F] italic bg-white/70 p-2.5 rounded-xl">
-                Notes from doctor: "{caseData.doctor_notes}"
-              </p>
             )}
           </motion.div>
         ) : (
@@ -216,10 +206,10 @@ export const CompletionScreen: React.FC<CompletionScreenProps> = ({
 
             <button
               onClick={() => {
-                ApiService.getCase(caseId).then(({ caseRecord }) => {
-                  if (caseRecord) {
-                    setCaseData(caseRecord);
-                    if (caseRecord.status === 'prescribed') setIsPrescribed(true);
+                ApiService.getPatientStatus(caseId).then(({ statusData }) => {
+                  if (statusData) {
+                    setCaseData(statusData);
+                    if (statusData.status === 'prescribed') setIsPrescribed(true);
                   }
                 });
               }}
